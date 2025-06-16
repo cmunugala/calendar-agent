@@ -1,0 +1,121 @@
+import datetime
+import os.path
+from typing import List, Dict, Optional
+
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+# If modifying these scopes, delete the file token.json.
+SCOPES = ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.readonly"] 
+
+def get_calendar_service():
+    """
+    Handles the Google Calendar API authentication flow.
+    Returns an authenticated Google Calendar service object.
+    """
+    creds = None
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            print("Refreshing Google Calendar API credentials...")
+            creds.refresh(Request())
+        else:
+            print("Initiating Google Calendar API OAuth flow...")
+            # Ensure credentials.json is in the same directory as this script
+            flow = InstalledAppFlow.from_client_secrets_file(
+                "credentials.json", SCOPES
+            )
+            creds = flow.run_local_server(port=0)
+
+        with open("token.json", "w") as token:
+            token.write(creds.to_json())
+        print("Google Calendar API credentials saved to token.json.")
+
+    try:
+        service = build("calendar", "v3", credentials=creds)
+        return service
+    except HttpError as error:
+        print(f"An error occurred connecting to Google Calendar API: {error}")
+        return None
+    
+def list_events_on_date(target_date_str: str) -> List[Dict]:
+    """
+    Lists events on a specific date from the user's primary Google Calendar.
+
+    Args:
+        target_date_str: The date in 'YYYY-MM-DD' format (e.g., '2025-06-15').
+
+    Returns:
+        A list of dictionaries, each representing an event's summary, start, and end time.
+        Returns an empty list if no events or an error occurs.
+    """
+    service = get_calendar_service()
+    if not service:
+        return {"error": "Failed to connect to Google Calendar API."}
+
+    try:
+        # Parse the target_date_str into a date object
+        target_date = datetime.datetime.strptime(target_date_str, "%Y-%m-%d").date()
+
+        # Set timeMin to the beginning of the target date (UTC)
+        time_min = datetime.datetime(
+            target_date.year, target_date.month, target_date.day,
+            0, 0, 0, tzinfo=datetime.timezone.utc
+        ).isoformat()
+
+        # Set timeMax to the end of the target date (UTC)
+        time_max = datetime.datetime(
+            target_date.year, target_date.month, target_date.day,
+            23, 59, 59, tzinfo=datetime.timezone.utc
+        ).isoformat()
+
+        print(f"Searching for events between {time_min} and {time_max}")
+
+        events_result = (
+            service.events()
+            .list(
+                calendarId="primary",
+                timeMin=time_min,
+                timeMax=time_max,
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
+        events = events_result.get("items", [])
+
+        if not events:
+            return {"message": f"No events found on {target_date_str}."}
+
+        event_list = []
+        for event in events:
+            # Handle full-day events vs timed events
+            start = event['start'].get('dateTime', event['start'].get('date'))
+            end = event['end'].get('dateTime', event['end'].get('date'))
+            event_list.append({
+                "summary": event.get("summary", "No Title"),
+                "start": start,
+                "end": end,
+                "htmlLink": event.get("htmlLink") # Link to the event in Google Calendar
+            })
+        return {"events": event_list, "message": f"Found {len(event_list)} events on {target_date_str}."}
+
+    except ValueError:
+        return {"error": "Invalid date format. Please provide date in YYYY-MM-DD."}
+    except HttpError as error:
+        print(f"An API error occurred: {error}")
+        return {"error": f"Failed to retrieve events from Calendar API: {error.content.decode('utf-8')}"}
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return {"error": f"An unexpected error occurred: {e}"}
+
+if __name__ == "__main__":
+    # Test with today's date
+    test_date = '2025-06-15' 
+    print(f"--- Testing listing events for {test_date} ---")
+    result = list_events_on_date(test_date)
+    print(result)
