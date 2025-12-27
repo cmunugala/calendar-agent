@@ -1,8 +1,8 @@
 import json
-from openai import OpenAI
+from openai import OpenAI,pydantic_function_tool
 import os
 from pydantic import BaseModel,Field
-from utils.google_calendar_utils import *
+from utils.google_calendar_utils import list_events_on_date
 
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -14,26 +14,21 @@ class CalendarEventsResponse(BaseModel):
     time:str
     events_description:str = Field(description="A natural language response to user's question.")
 
-#define tools 
+#define tools and their input models 
 
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "list_events_on_date",
-            "description": "Get information about events from Google Calendar on a particular date.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "target_date_str": {"type": "string"},
-                },
-                "required": ["target_date_str"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    }
-]
+class ListEvents(BaseModel):
+    target_date_str: str = Field("The date to list events for, in YYYY-MM-DD format.")
+
+tools = [pydantic_function_tool(ListEvents, name="list_events_on_date")]
+
+# logic to actually call function
+
+def call_function(name, args):
+    if name == "list_events_on_date":
+        return list_events_on_date(**args)
+
+
+# main agent loop
 
 messages = [
         {"role":"system","content":"You are a helpful assistant."},
@@ -46,17 +41,7 @@ completion = client.beta.chat.completions.parse(
     tools = tools
 )
 
-print('COMPLETION 1')
-print('----------------')
-print(completion.model_dump())
 
-
-# logic to actually call function
-
-def call_function(name, args):
-    if name == "list_events_on_date":
-        return list_events_on_date(**args)
-    
 for tool_call in completion.choices[0].message.tool_calls:
     name = tool_call.function.name
     args = json.loads(tool_call.function.arguments)
@@ -75,15 +60,8 @@ completion2 = client.beta.chat.completions.parse(
 final_response = completion2.choices[0].message.parsed
 
 
-print('COMPLETION 1')
-print('----------------')
-print(completion.model_dump())
-print('COMPLETION 2')
-print('--------------------')
-print(completion.model_dump())
-print('\n\n')
-print(final_response.date)
-print(final_response.time)
+#print(completion.model_dump())
+#print(completion2.model_dump())
 print(final_response.events_description)
 
 
