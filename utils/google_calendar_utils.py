@@ -112,10 +112,42 @@ def list_events_on_date(target_date_str: str) -> List[Dict]:
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         return {"error": f"An unexpected error occurred: {e}"}
+    
+def create_event(event_title: str, event_date_str: str, event_time_str: str, duration_minutes: int = 30):
+    service = get_calendar_service()
+    if not service:
+        return {"error": "Failed to connect to Google Calendar API."}
+    
+    start_dt = datetime.datetime.strptime(f"{event_date_str} {event_time_str}", "%Y-%m-%d %H:%M")
+    end_dt = start_dt + datetime.timedelta(minutes=duration_minutes)
 
-if __name__ == "__main__":
-    # Test with today's date
-    test_date = '2025-06-15' 
-    print(f"--- Testing listing events for {test_date} ---")
-    result = list_events_on_date(test_date)
-    print(result)
+    start_str = start_dt.isoformat()
+    end_str = end_dt.isoformat()
+
+    event = {
+        "summary": event_title,
+        "start": {
+            "dateTime": start_str,
+            "timeZone": "America/Los_Angeles",
+        },
+        "end": {
+            "dateTime": end_str,
+            "timeZone": "America/Los_Angeles",
+        },
+    }
+
+    try:
+        created_event = service.events().insert(calendarId="primary", body=event).execute()
+        return {"status": "success", "link": created_event.get("htmlLink")}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    
+def delete_event(event_id: str):
+    service = get_calendar_service()
+    if not service:
+        return {"error": "Failed to connect to Google Calendar API."}
+    try:
+        service.events().delete(calendarId="primary", eventId=event_id).execute()
+        return {"status": "success", "message": f"Event {event_id} deleted."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
