@@ -100,7 +100,8 @@ def list_events_on_date(target_date_str: str) -> List[Dict]:
                 "summary": event.get("summary", "No Title"),
                 "start": start,
                 "end": end,
-                "htmlLink": event.get("htmlLink") # Link to the event in Google Calendar
+                "htmlLink": event.get("htmlLink"),
+                "event_id": event.get("id")  
             })
         return {"events": event_list, "message": f"Found {len(event_list)} events on {target_date_str}."}
 
@@ -112,6 +113,17 @@ def list_events_on_date(target_date_str: str) -> List[Dict]:
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         return {"error": f"An unexpected error occurred: {e}"}
+    
+def get_event_info(event_id: str) -> Optional[Dict]:
+    service = get_calendar_service()
+    if not service:
+        return None
+    try:
+        event = service.events().get(calendarId='primary', eventId=event_id).execute()
+        return event
+    except Exception as e:
+        print(f"Error fetching event info: {e}")
+        return None
     
 def create_event(event_title: str, event_date_str: str, event_time_str: str, duration_minutes: int = 30):
     service = get_calendar_service()
@@ -149,5 +161,20 @@ def delete_event(event_id: str):
     try:
         service.events().delete(calendarId="primary", eventId=event_id).execute()
         return {"status": "success", "message": f"Event {event_id} deleted."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    
+def update_event(event_id: str, updates: Dict):
+    service = get_calendar_service()
+    if not service:
+        return {"error": "Failed to connect to Google Calendar API."}
+    
+    try:
+        updated_event = service.events().patch(
+            calendarId='primary', 
+            eventId=event_id, 
+            body=updates
+        ).execute()
+        return {"status": "success", "link": updated_event.get("htmlLink")}
     except Exception as e:
         return {"status": "error", "message": str(e)}
