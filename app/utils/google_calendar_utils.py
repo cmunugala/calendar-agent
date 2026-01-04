@@ -44,7 +44,7 @@ def get_calendar_service():
         print(f"An error occurred connecting to Google Calendar API: {error}")
         return None
     
-def list_events_on_date(target_date_str: str) -> List[Dict]:
+def list_events_on_date(target_date_str: str, user_timezone: str) -> List[Dict]:
     """
     Lists events on a specific date from the user's primary Google Calendar.
 
@@ -62,17 +62,17 @@ def list_events_on_date(target_date_str: str) -> List[Dict]:
     try:
         # Parse the target_date_str into a date object
         target_date = datetime.datetime.strptime(target_date_str, "%Y-%m-%d").date()
-
+        tz = ZoneInfo(user_timezone)
         # Set timeMin to the beginning of the target date (UTC)
         time_min = datetime.datetime(
             target_date.year, target_date.month, target_date.day,
-            0, 0, 0, tzinfo=datetime.timezone.utc
+            0, 0, 0, tzinfo=tz
         ).isoformat()
 
         # Set timeMax to the end of the target date (UTC)
         time_max = datetime.datetime(
             target_date.year, target_date.month, target_date.day,
-            23, 59, 59, tzinfo=datetime.timezone.utc
+            23, 59, 59, tzinfo=tz
         ).isoformat()
 
         print(f"Searching for events between {time_min} and {time_max}")

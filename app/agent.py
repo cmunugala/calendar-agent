@@ -4,7 +4,9 @@ from openai import OpenAI,pydantic_function_tool
 import os
 from pydantic import BaseModel,Field
 from typing import Optional
-from utils.google_calendar_utils import list_events_on_date,create_event,delete_event,update_event,get_event_info,check_for_conflicts,get_calendar_timezone
+from zoneinfo import ZoneInfo
+from app.utils.google_calendar_utils import list_events_on_date,create_event,delete_event,update_event,get_event_info,check_for_conflicts,get_calendar_timezone
+
 
 
 
@@ -61,8 +63,8 @@ tools = [pydantic_function_tool(ListEvents, name="list_events_on_date"),
 
 def call_function(name, args,user_timezone):
     if name == "list_events_on_date":
-        return list_events_on_date(**args)
-    
+        return list_events_on_date(target_date_str=args['target_date_str'], user_timezone=user_timezone)
+
     elif name == "create_event":
         conflicts = check_for_conflicts(event_date_str=args['event_date_str'], event_time_str=args['event_time_str'], duration_minutes=args['duration_minutes'], timezone=user_timezone)
         if conflicts and not args.get("force_ignore_conflict"):
@@ -122,8 +124,52 @@ def call_function(name, args,user_timezone):
             print("Deletion canceled.")
             return {"status": "canceled", "message": "Event deletion was canceled by the user."}
 
+# version for integration with fast api
+def run_assistant(client, messages : list, user_timezone: str):
+    now = datetime.now(ZoneInfo(user_timezone))
+    current_date = now.strftime("%Y-%m-%d")
 
-# main agent loop
+    system_message = {"role": "system", "content": f"You are a helpful assistant. CRITICAL: Today is {current_date}. Be very careful about dates and times. Do not invent events or details. Do not do things on dates and times that were not discussed with the user. Always refer to the what has been going on in the actual conversation with the user to make decisions.IMPORTANT RULES FOR SEARCHING: 1. When a user mentions a specific day (like 'tomorrow' or 'Friday'), you MUST search for the ENTIRE day, from 00:00:00 to 23:59:59. 2. Do not limit searches to the current time of day. 3. If a user asks about a day, assume they mean the whole day starting first 00:00:00 to 23:59:59. 4. If the user asks about a certain day, ONLY refer to events that start on or after 00:00:00 of the requested day. Do not include events from previous days or future days."}
+
+    active_conversation = [system_message] + messages
+
+    max_iterations = 5
+    for _ in range(max_iterations):
+        completion = client.beta.chat.completions.parse(
+            model = "gpt-4o-mini",
+            messages = active_conversation,
+            tools = tools,
+            response_format = CalendarEventsResponse
+        )
+        response_message = completion.choices[0].message
+        active_conversation.append(response_message)
+
+        if response_message.tool_calls:
+            for tool_call in response_message.tool_calls:
+                print(f"DEBUG: LLM is calling tool with args:{tool_call.function.arguments}")
+                name = tool_call.function.name
+                args = tool_call.function.parsed_arguments.model_dump()
+
+                print(f"🛠️ Agent calling tool: {name}")
+                result = call_function(name, args,user_timezone)
+                active_conversation.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(result)
+                })
+
+            continue
+        
+        else:
+            break
+
+    if response_message.tool_calls:
+        return "Max iterations reached without a final answer."
+
+    final_response = response_message.parsed
+    return final_response.events_description
+
+
 
 def main():
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -144,7 +190,8 @@ def main():
             completion = client.beta.chat.completions.parse(
                 model = "gpt-4o-mini",
                 messages = messages,
-                tools = tools
+                tools = tools,
+                response_format = CalendarEventsResponse
             )
             response_message = completion.choices[0].message
             messages.append(response_message)
@@ -166,18 +213,18 @@ def main():
                 continue
             
             else:
-                final_completion = client.beta.chat.completions.parse(
-                    model = "gpt-4o-mini",
-                    messages = messages,
-                    response_format = CalendarEventsResponse
-                )
+                # final_completion = client.beta.chat.completions.parse(
+                #     model = "gpt-4o-mini",
+                #     messages = messages,
+                #     response_format = CalendarEventsResponse
+                # )
                 break
 
-        if not final_completion:
+        if not completion:
             print("Max iterations reached without a final answer.")
             exit(1)
 
-        final_response = final_completion.choices[0].message.parsed
+        final_response = completion.choices[0].message.parsed
         print(final_response.events_description)
 
 if __name__ == "__main__":
